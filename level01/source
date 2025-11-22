@@ -1,0 +1,52 @@
+#include <stdio.h>
+#include <string.h>
+
+char a_user_name[100];  // Global buffer at 0x0804a040
+
+int verify_user_name(void)
+{
+    puts("verifying username....\n");
+    return memcmp(a_user_name, "dat_wil", 7) != 0;
+}
+
+int verify_user_pass(const char *password)
+{
+    return memcmp(password, "admin", 5) != 0;
+}
+
+int main(void)
+{
+    char password[64];  // Stack buffer at [esp+0x1c]
+    int auth_failed;
+
+    memset(password, 0, sizeof(password));
+    auth_failed = 0;
+
+    puts("********* ADMIN LOGIN PROMPT *********");
+    printf("Enter Username: ");
+
+    // VULNERABILITY 1: Buffer overflow in global buffer
+    // a_user_name is 100 bytes but fgets reads up to 256 bytes
+    fgets(a_user_name, 256, stdin);
+
+    auth_failed = verify_user_name();
+
+    if (auth_failed)
+    {
+        puts("nope, incorrect username...\n");
+    }
+    else
+    {
+        puts("Enter Password: ");
+
+        // VULNERABILITY 2: Stack buffer overflow
+        // password is 64 bytes but fgets reads up to 100 bytes
+        // This allows overwriting saved EIP at offset 80
+        fgets(password, 100, stdin);
+
+        auth_failed = verify_user_pass(password);
+        puts("nope, incorrect password...\n");
+    }
+
+    return 1;
+}

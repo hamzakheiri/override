@@ -1,0 +1,189 @@
+# Level03 Walkthrough
+
+## Vulnerability
+
+**XOR Decryption Logic Flaw** - The program uses a simple XOR cipher to encrypt a target string, and we can reverse-engineer the XOR key to find the correct password.
+
+## Analysis Steps
+
+### 1. Export and examine the binary
+
+```bash
+scp -P 4242 level03@192.168.44.139:~/level03 ./binaries/level03
+file binaries/level03
+# ELF 32-bit LSB executable (Intel 80386)
+strings binaries/level03
+```
+
+Key findings:
+- 32-bit binary (back to i386 from previous 64-bit)
+- Has `decrypt` and `test` functions
+- Uses `srand`, `rand`, `time` - random number generation
+- Has stack canary protection (`__stack_chk_fail`)
+- Strings: "Congratulations!", "/bin/sh", "Invalid Password"
+
+### 2. Decompile with Ghidra/IDA
+
+Program flow:
+1. **`main()`**:
+   - Seeds random number generator with `srand(time(NULL))`
+   - Prompts for password (integer)
+   - Calls `test(password, 0x1337d00d)`
+
+2. **`test(a1, a2)`**:
+   - Calculates `diff = a2 - a1` (0x1337d00d - password)
+   - Switch statement on `diff`:
+     - Cases 1-9, 16-21: calls `decrypt(diff)`
+     - Default: calls `decrypt(rand())` (random, will fail)
+
+3. **`decrypt(xor_key)`**:
+   - Has encrypted string: `0x757c7d51 0x67667360 0x7b66737e 0x33617c7d`
+   - XORs each byte with `xor_key`
+   - Compares result with "Congratulations!"
+   - If match → spawns `/bin/sh`
+   - If no match → prints "Invalid Password"
+
+### 3. Extract the Encrypted String
+
+From assembly (objdump):
+```asm
+8048673:	c7 45 e3 51 7d 7c 75 	movl   $0x757c7d51,-0x1d(%ebp)
+804867a:	c7 45 e7 60 73 66 67 	movl   $0x67667360,-0x19(%ebp)
+8048681:	c7 45 eb 7e 73 66 7b 	movl   $0x7b66737e,-0x15(%ebp)
+8048688:	c7 45 ef 7d 7c 61 33 	movl   $0x33617c7d,-0x11(%ebp)
+804868f:	c6 45 f3 00          	movb   $0x0,-0xd(%ebp)
+```
+
+Encrypted bytes (little-endian): `51 7d 7c 75 60 73 66 67 7e 73 66 7b 7d 7c 61 33`
+
+As string: `"Q}|u`sfg~sf{}|a3"`
+
+### 4. Find the XOR Key
+
+We know:
+- Target string: `"Congratulations!"` (16 bytes)
+- Encrypted string: `"Q}|u`sfg~sf{}|a3"` (16 bytes)
+- XOR operation: `encrypted[i] ^ key = target[i]`
+- Therefore: `key = encrypted[i] ^ target[i]`
+
+```python
+encrypted = b'Q}|u`sfg~sf{}|a3'
+target = b'Congratulations!'
+
+# Find XOR key
+for i in range(256):
+    decrypted = bytes([b ^ i for b in encrypted])
+    if decrypted == target:
+        print(f"XOR key: {i}")
+        break
+```
+
+**Result: XOR key = 18**
+
+### 5. Calculate the Password
+
+From the code flow:
+```c
+test(password, 0x1337d00d);
+// Inside test():
+diff = 0x1337d00d - password;
+// We need diff = 18 to call decrypt(18)
+```
+
+Therefore:
+```
+0x1337d00d - password = 18
+password = 0x1337d00d - 18
+password = 322424845 - 18
+password = 322424827
+```
+
+### 6. Verify the Solution
+
+```python
+# Verify XOR decryption
+encrypted = [0x51, 0x7d, 0x7c, 0x75, 0x60, 0x73, 0x66, 0x67,
+             0x7e, 0x73, 0x66, 0x7b, 0x7d, 0x7c, 0x61, 0x33]
+
+decrypted = ''.join([chr(b ^ 18) for b in encrypted])
+print(decrypted)  # Output: "Congratulations!"
+```
+
+## Exploitation
+
+```bash
+echo "322424827" | ./level03
+# Output:
+# ***********************************
+# *		level03		**
+# ***********************************
+# Password:
+# Congratulations!
+# $ whoami
+# level04
+```
+
+## Flag
+
+```
+kgv3tkEb9h2mLkRsPkXRfc2mHbjMxQzvb2FrgKkf
+```
+
+## Key Takeaways
+
+1. **XOR cipher is reversible**: If you know plaintext and ciphertext, you can find the key
+2. **Hardcoded encryption keys are weak**: The encrypted string is in the binary
+3. **Switch statements create predictable behavior**: Limited valid inputs (1-9, 16-21)
+4. **Stack canaries don't prevent logic flaws**: This binary has stack protection but still vulnerable
+5. **Reverse engineering**: Understanding program flow is key to finding vulnerabilities
+
+## Detailed Breakdown
+
+### Why XOR Key = 18?
+
+```
+Encrypted[0] = 0x51 = 'Q'
+Target[0]    = 0x43 = 'C'
+Key = 0x51 ^ 0x43 = 0x12 = 18
+
+Encrypted[1] = 0x7d = '}'
+Target[1]    = 0x6f = 'o'
+Key = 0x7d ^ 0x6f = 0x12 = 18
+
+... (all bytes give the same key)
+```
+
+### Why Password = 322424827?
+
+```
+Magic number: 0x1337d00d = 322424845 (decimal)
+Required diff: 18
+Password = 322424845 - 18 = 322424827
+```
+
+### Alternative Approaches (Not Used)
+
+1. **Brute force all valid cases**: Try passwords that give diff = 1-9, 16-21
+   - Would require trying 15 different passwords
+   - Our approach is more elegant (direct calculation)
+
+2. **Patch the binary**: Modify the comparison to always succeed
+   - Requires binary modification tools
+   - Not necessary when we can calculate the correct password
+
+3. **Buffer overflow**: Try to overflow the scanf input
+   - Stack canary would detect this
+   - Not the intended solution
+
+## Security Lessons
+
+**For Developers:**
+- Never use simple XOR with a single-byte key for encryption
+- Don't hardcode encrypted strings in binaries
+- Use proper cryptographic libraries (AES, ChaCha20, etc.)
+- Avoid predictable switch/case patterns for security checks
+
+**For Attackers:**
+- Look for encryption/decryption functions in binaries
+- XOR ciphers are trivial to break with known plaintext
+- Understanding program logic is often easier than exploiting memory corruption

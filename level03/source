@@ -1,0 +1,111 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+// Encrypted string that should decrypt to "Congratulations!"
+// Stored as: 0x757c7d51 0x67667360 0x7b66737e 0x33617c7d
+// In bytes: "Q}|u`sfg~sf{}|a3"
+char encrypted[] = {
+    0x51, 0x7d, 0x7c, 0x75,  // 0x757c7d51 (little-endian)
+    0x60, 0x73, 0x66, 0x67,  // 0x67667360
+    0x7e, 0x73, 0x66, 0x7b,  // 0x7b66737e
+    0x7d, 0x7c, 0x61, 0x33,  // 0x33617c7d
+    0x00                      // Null terminator
+};
+
+int decrypt(int xor_key)
+{
+    char buffer[17];
+    int i;
+
+    // Copy encrypted string to buffer
+    strcpy(buffer, encrypted);
+
+    // XOR each byte with the key
+    for (i = 0; i < strlen(buffer); i++)
+    {
+        buffer[i] ^= xor_key;
+    }
+
+    // Compare with "Congratulations!"
+    if (strcmp(buffer, "Congratulations!") == 0)
+    {
+        // Success! Spawn shell
+        system("/bin/sh");
+    }
+    else
+    {
+        // Failure
+        puts("\nInvalid Password");
+    }
+
+    return 0;
+}
+
+int test(int password, int magic)
+{
+    int diff;
+
+    // Calculate difference
+    diff = magic - password;
+
+    // Switch based on difference
+    // Valid cases: 1-9, 16-21
+    switch (diff)
+    {
+        case 1:  decrypt(1);  break;
+        case 2:  decrypt(2);  break;
+        case 3:  decrypt(3);  break;
+        case 4:  decrypt(4);  break;
+        case 5:  decrypt(5);  break;
+        case 6:  decrypt(6);  break;
+        case 7:  decrypt(7);  break;
+        case 8:  decrypt(8);  break;
+        case 9:  decrypt(9);  break;
+        case 16: decrypt(16); break;
+        case 17: decrypt(17); break;
+        case 18: decrypt(18); break;  // ← CORRECT KEY!
+        case 19: decrypt(19); break;
+        case 20: decrypt(20); break;
+        case 21: decrypt(21); break;
+        default: decrypt(rand()); break;  // Random key (will fail)
+    }
+
+    return 0;
+}
+
+int main(void)
+{
+    int password;
+
+    // Seed random number generator
+    srand(time(NULL));
+
+    // Display banner
+    puts("***********************************");
+    puts("*\t\tlevel03\t\t**");
+    puts("***********************************");
+
+    // Prompt for password
+    printf("Password:");
+    scanf("%d", &password);
+
+    // Test the password
+    // We need: 0x1337d00d - password = 18
+    // So: password = 0x1337d00d - 18 = 322424827
+    test(password, 0x1337d00d);
+
+    return 0;
+}
+
+/*
+ * SOLUTION:
+ *
+ * The encrypted string XORed with key 18 gives "Congratulations!"
+ *
+ * To get decrypt(18) called:
+ *   diff = 0x1337d00d - password = 18
+ *   password = 0x1337d00d - 18
+ *   password = 322424827
+ */

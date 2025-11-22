@@ -1,0 +1,54 @@
+# Level00 Walkthrough
+
+## Vulnerability
+Hardcoded password comparison - the program compares user input against a hardcoded integer value.
+
+## Analysis Steps
+
+1. **Export the binary from VM:**
+   ```bash
+   scp -P 4242 level00@192.168.44.139:~/level00 ./binaries/level00
+   ```
+
+2. **Examine strings in the binary:**
+   ```bash
+   strings binaries/level00
+   ```
+   Found: "Password:", "Authenticated!", "/bin/sh", "Invalid Password!"
+
+3. **Decompile with Ghidra/IDA:**
+   The main function shows:
+   - Reads an integer with `scanf("%d", &v4)`
+   - Compares it to hardcoded value `5276`
+   - If match: spawns shell with `system("/bin/sh")`
+   - If no match: prints "Invalid Password!"
+
+## Exploitation
+
+The password is simply the integer **5276**.
+
+### Steps:
+1. SSH into the VM:
+   ```bash
+   ssh level00@192.168.44.139 -p 4242
+   # Password: level00
+   ```
+
+2. Run the binary and enter the password:
+   ```bash
+   ./level00
+   # Enter: 5276
+   ```
+
+3. Get the flag:
+   ```bash
+   cat /home/users/level01/.pass
+   ```
+
+## Flag
+```
+uSq2ehEGT6c9S24zbshexZQBXUGrncxn5sD5QfGL
+```
+
+## Key Takeaway
+Never hardcode passwords or secrets in your binaries. Even compiled code can be easily reverse-engineered to extract hardcoded values.

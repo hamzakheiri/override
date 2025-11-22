@@ -1,0 +1,92 @@
+# Level06 Walkthrough
+
+## Vulnerability
+
+**Serial Number Validation** - The program validates a serial number based on a predictable algorithm that can be reversed.
+
+## Analysis
+
+The `auth()` function calculates a serial number from the login string:
+
+```c
+calculated_serial = (login[3] ^ 0x1337) + 6221293;
+
+for (i = 0; i < login_len; ++i)
+{
+  if (login[i] <= 31)
+    return 1;
+  calculated_serial += (calculated_serial ^ (unsigned int)login[i]) % 0x539;
+}
+
+return serial != calculated_serial;
+```
+
+### Constraints
+
+1. Login must be **more than 5 characters**
+2. All characters must be **printable** (ASCII > 31)
+3. Serial must match the calculated value
+
+### Algorithm Breakdown
+
+1. **Initial value**: `v4 = (login[3] ^ 0x1337) + 6221293`
+   - Takes the 4th character of login (index 3)
+   - XORs it with `0x1337` (4919 in decimal)
+   - Adds `6221293`
+
+2. **Loop through each character**:
+   - `v4 += (v4 ^ login[i]) % 0x539`
+   - XOR current value with character
+   - Take modulo `0x539` (1337 in decimal)
+   - Add to current value
+
+3. **Return 0 (success) if serial == v4**
+
+## Exploit Strategy
+
+Since the algorithm is deterministic and uses only the login string, we can write a keygen to calculate the correct serial for any login.
+
+### Keygen Implementation
+
+```python
+def calculate_serial(login):
+    login = login.strip()
+
+    # Calculate serial using the same algorithm
+    v4 = (ord(login[3]) ^ 0x1337) + 6221293
+
+    for i in range(len(login)):
+        v4 += (v4 ^ ord(login[i])) % 0x539
+
+    return v4
+```
+
+### Usage
+
+```bash
+# Generate serial for login "test123"
+python keygen.py test123
+# Output: Serial: 6231207
+
+# Use it on the binary
+./level06
+-> Enter Login: test123
+-> Enter Serial: 6231207
+Authenticated!
+$ cat /home/users/level07/.pass
+GbcPDRgsFK77LNnnuh7QyFYA2942Gp8yKj9KrWD8
+```
+
+## Anti-Debugging Note
+
+The program uses `ptrace(PTRACE_TRACEME, 0, 1, 0)` to detect debugging:
+- If already being traced (e.g., in GDB), ptrace returns -1
+- This triggers the "TAMPERING DETECTED" message
+- To bypass in GDB: patch the return value or skip the check
+
+## Key Concepts
+
+- **Serial number validation**: Reverse engineering authentication algorithms
+- **Keygen development**: Writing tools to generate valid credentials
+- **Deterministic algorithms**: Exploiting predictable calculations
+- **Anti-debugging**: ptrace-based debugger detection

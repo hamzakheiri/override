@@ -1,0 +1,46 @@
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/prctl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    int32_t pid = fork();
+    char buffer[160];  // Buffer at esp+0x20, total stack allocation 0xb0 (176 bytes)
+    memset(buffer, 0, 128);  // Clear first 128 bytes
+    int32_t stat_loc = 0;
+
+    if (pid == 0) {
+        // Child process
+        prctl(PR_SET_PDEATHSIG, SIGHUP);  // Die if parent dies
+        ptrace(PTRACE_TRACEME, 0, 0, 0);  // Allow parent to trace us
+        puts("Give me some shellcode, k");
+        gets(buffer);  // VULNERABLE: No bounds checking!
+        return 0;
+    }
+
+    // Parent process
+    wait(&stat_loc);
+
+    // Monitor child's syscalls
+    while (WIFEXITED(stat_loc) == 0) {
+        // Check if child stopped normally
+        if (WIFSTOPPED(stat_loc)) {
+            // Get the syscall number from child's registers
+            int syscall_num = ptrace(PTRACE_PEEKUSER, pid, 44, 0);  // EAX offset = 44
+
+            if (syscall_num == 11) {  // execve syscall
+                puts("no exec() for you");
+                kill(pid, SIGKILL);
+                return 0;
+            }
+        }
+
+        ptrace(PTRACE_SYSCALL, pid, 0, 0);  // Continue until next syscall
+        wait(&stat_loc);
+    }
+
+    puts("child is exiting...");
+    return 0;
+}
