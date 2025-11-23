@@ -1,1 +1,52 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
+void secret_backdoor() {
+    char s[128];
+    fgets(s, 128, stdin);
+    system(s);
+}
+
+void set_msg(char *buffer) {
+    char s[1024];
+    puts(">: Msg @Unix-Dude");
+    printf(">>: ");
+    fgets(s, 1024, stdin);
+    // Vulnerability: The length passed to strncpy is read from buffer[180]
+    // This length was overwritten by set_username
+    strncpy(buffer, s, *(int *)(buffer + 180));
+}
+
+void set_username(char *buffer) {
+    char s[128];
+    int i;
+    puts(">: Enter your username");
+    printf(">>: ");
+    fgets(s, 128, stdin);
+    // Vulnerability: Loop runs 41 times (0 to 40), writing 41 bytes
+    // buffer is at offset 140 relative to struct start?
+    // It writes to buffer[140]...buffer[180]
+    // buffer[180] overlaps with the length variable used in set_msg
+    for (i = 0; i <= 40 && s[i]; ++i) {
+        buffer[140 + i] = s[i];
+    }
+    printf(">: Welcome, %s", &buffer[140]);
+}
+
+void handle_msg() {
+    char buffer[140]; // Actually larger struct
+    // set_username writes to buffer + 140
+    // set_msg uses *(int*)(buffer + 180) as length
+    set_username(buffer);
+    set_msg(buffer);
+    puts(">: Msg sent!");
+}
+
+int main() {
+    puts("--------------------------------------------");
+    puts("|   ~Welcome to l33t-m$n ~    v1337        |");
+    puts("--------------------------------------------");
+    handle_msg();
+    return 0;
+}

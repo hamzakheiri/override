@@ -1,1 +1,37 @@
+# Level 09 Walkthrough
 
+## Vulnerability
+The `level09` binary is a messaging service.
+It has a function `set_username` that reads a username into a buffer.
+It has an off-by-one error (or loop bound error) that allows writing 41 bytes into a buffer that is effectively treated as having 40 bytes of safe space before a critical variable.
+Specifically, `set_username` writes to `a1 + i + 140`. The loop runs for `i` from 0 to 40 (41 iterations).
+The byte at `a1 + 180` (offset 140 + 40) is overwritten.
+This byte corresponds to the length variable passed to `strncpy` in `set_msg`.
+
+By overwriting this length byte with a larger value (e.g., `0xca` = 202), we can cause `strncpy` in `set_msg` to overflow the message buffer `v1`.
+`v1` is located at `rbp-0xc0`. The return address is at `rbp+0x8`.
+The distance is 200 bytes.
+By writing 202 bytes, we overwrite the first 2 bytes of the return address.
+
+## Exploit
+The binary has PIE (Position Independent Executable) enabled, so addresses are randomized.
+However, the `secret_backdoor` function (which executes `system(stdin)`) is located at offset `0x88c`.
+The `handle_msg` function returns to an address with offset `0xabd`.
+The top bytes of these addresses are identical.
+We only need to overwrite the last 2 bytes to redirect execution from `...abd` to `...88c`.
+Specifically, we overwrite `0x4abd` with `0x488c` (bytes `\x8c\x48`).
+
+Payload structure:
+1.  **Username**: 40 bytes of padding + `\xca` (202). This sets the `strncpy` length to 202.
+2.  **Message**: 200 bytes of padding + `\x8c\x48`. This overwrites the return address partial bytes.
+    *   **Crucial**: We must use `sys.stdout.write` to avoid adding a newline, so `strncpy` copies exactly 202 bytes and does not pad with nulls (which would corrupt the top bytes of the address).
+3.  **Command**: `/bin/sh`. This is consumed by `fgets` inside `secret_backdoor` and passed to `system`.
+
+## Exploit One-Liner
+```bash
+(python -c 'print "A"*40 + "\xca"'; python -c 'import sys; sys.stdout.write("B"*200 + "\x8c\x48")'; cat) | ./level09
+```
+Then type `/bin/sh` to get a shell.
+
+## Flag
+`j4AunAPDXaJxxWjYEUxpanmvSgRDV3tpA5BEaBuE`
