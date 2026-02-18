@@ -118,7 +118,7 @@ print(password.decode('ascii'))
 ### Step 4: Login with the password
 
 ```bash
-echo -e "anything\nHh74RPnuQ9sa5JAEXgNWCqz7sXGnh5J5M9KfPg3H" | ./level02
+(echo -e "anything\nHh74RPnuQ9sa5JAEXgNWCqz7sXGnh5J5M9KfPg3H"; cat) | ./level02
 # Output: Greetings, anything!
 # Shell spawned as level03!
 ```
